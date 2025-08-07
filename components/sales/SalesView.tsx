@@ -2,7 +2,7 @@ import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { useAppContext } from '../../hooks/useAppContext';
 import { ICONS } from '../../constants';
 import { Card } from '../ui/Card';
-
+import { classifyStoreRegion } from '../../services/geminiService';
 import { Store, OrderStatus, Product, SoughtProduct, CompetitorPrice, CompetitorVolume, SurveyResponse, Visit, VisitStatus, Role, SalesVisitRoutePlan, SalesVisitStop } from '../../types';
 import { Modal } from '../ui/Modal';
 import { DataView } from './DataView';
@@ -210,26 +210,9 @@ const AcquireStore: React.FC = () => {
             return;
         }
         try {
-            const { lat, lng } = coords;
-            let region: 'Timur' | 'Barat' | 'Bukan di Kulon Progo' = 'Bukan di Kulon Progo';
-
-            // Bounding box for Kulon Progo
-            const minLat = -8.00;
-            const maxLat = -7.67;
-            const minLng = 110.00;
-            const maxLng = 110.30;
-            const pdamKulonProgoLongitude = 110.1486773;
-
-            if (lat >= minLat && lat <= maxLat && lng >= minLng && lng <= maxLng) {
-                if (lng > pdamKulonProgoLongitude) {
-                    region = 'Timur';
-                } else {
-                    region = 'Barat';
-                }
-            }
-
-            setClassifiedRegion(region);
-            if (region === 'Bukan di Kulon Progo') {
+            const result = await classifyStoreRegion(coords);
+            setClassifiedRegion(result.region);
+            if (result.region === 'Bukan di Kulon Progo') {
                 setError('Lokasi ini berada di luar wilayah layanan Kulon Progo.');
             }
         } catch (error) {

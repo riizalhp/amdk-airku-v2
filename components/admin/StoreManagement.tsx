@@ -5,7 +5,7 @@ import { Card } from '../ui/Card';
 import { ICONS } from '../../constants';
 import { Store, Coordinate } from '../../types';
 import { Modal } from '../ui/Modal';
-
+import { classifyStoreRegion } from '../../services/geminiService';
 
 const parseCoordinatesFromURL = (url: string): Coordinate | null => {
     const match = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
@@ -86,31 +86,18 @@ export const StoreManagement: React.FC = () => {
 
         setIsClassifying(true);
         try {
-            const { lat, lng } = coords;
-            let region: 'Timur' | 'Barat' | 'Bukan di Kulon Progo' = 'Bukan di Kulon Progo';
-
-            // Bounding box for Kulon Progo
-            const minLat = -8.00;
-            const maxLat = -7.67;
-            const minLng = 110.00;
-            const maxLng = 110.30;
-            const pdamKulonProgoLongitude = 110.1486773;
-
-            if (lat >= minLat && lat <= maxLat && lng >= minLng && lng <= maxLng) {
-                if (lng > pdamKulonProgoLongitude) {
-                    region = 'Timur';
-                } else {
-                    region = 'Barat';
+            const result = await classifyStoreRegion(coords);
+            if (result.region) {
+                setDetectedRegion(result.region);
+                if (result.region === 'Bukan di Kulon Progo') {
+                    setFormError('Lokasi toko berada di luar wilayah layanan Kulon Progo.');
                 }
-            }
-
-            setDetectedRegion(region);
-            if (region === 'Bukan di Kulon Progo') {
-                setFormError('Lokasi toko berada di luar wilayah layanan Kulon Progo.');
+            } else {
+                setFormError('Gagal mendeteksi wilayah. Coba lagi.');
             }
         } catch (error) {
             console.error(error);
-            setFormError('Terjadi kesalahan saat mendeteksi wilayah.');
+            setFormError('Terjadi kesalahan saat menghubungi layanan AI.');
         } finally {
             setIsClassifying(false);
         }

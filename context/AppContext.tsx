@@ -20,7 +20,7 @@ import {
     SalesVisitRoutePlan,
     SalesVisitStop
 } from '../types';
-import { optimizeAndSequenceRoute, optimizeSalesVisitRoute } from '../services/geminiService';
+import { calculateSavingsMatrixRoutes, RouteNode } from '../services/routingService';
 
 
 export const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -424,8 +424,6 @@ export const AppProvider: React.FC<{children: ReactNode}> = ({ children }) => {
         // 2. Filter orders for the selected assignment
         const ordersToRoute = orders.filter(order => {
             const store = stores.find(s => s.id === order.storeId);
-            // An order is eligible if it's explicitly assigned to this vehicle,
-            // OR it's unassigned but in the vehicle's region.
             const isAssignedToThisVehicle = order.assignedVehicleId === vehicleId;
             const isUnassignedInRegion = order.assignedVehicleId === null && store?.region === vehicle.region;
 
@@ -439,70 +437,53 @@ export const AppProvider: React.FC<{children: ReactNode}> = ({ children }) => {
         if (ordersToRoute.length === 0) {
             return { success: false, message: "Tidak ada pesanan 'Pending' untuk tanggal dan armada/wilayah yang dipilih." };
         }
-        
-        // 3. Prepare for trip generation
+
+        // 3. Prepare nodes for the algorithm
+        const nodes: RouteNode[] = ordersToRoute.map(order => ({
+            id: order.id,
+            location: order.location,
+            demand: getOrderCapacity(order.items),
+        })).filter(node => node.demand <= vehicle.capacity);
+
+        const unroutableLargeOrders = ordersToRoute.length - nodes.length;
+        const depotLocation = { lat: -7.8664161, lng: 110.1486773 };
+
+        // 4. Calculate routes using Savings Matrix algorithm
+        const calculatedTrips = calculateSavingsMatrixRoutes(nodes, depotLocation, vehicle.capacity);
+
+        if (calculatedTrips.length === 0 && nodes.length > 0) {
+             return { success: false, message: "Gagal menghasilkan rute. Pastikan ada pesanan yang valid." };
+        }
+
         const newRoutes: RoutePlan[] = [];
         const routedOrderIds = new Set<string>();
-        const depotLocation = { lat: -7.8664161, lng: 110.1486773 }; 
 
-        let vehicleOrdersPool = [...ordersToRoute];
-        
-        // 4. Create trips based on capacity
-        while (vehicleOrdersPool.length > 0) {
-            let tripOrders: Order[] = [];
-            let tripLoad = 0;
-            let remainingForNextTrip: Order[] = [];
-
-            vehicleOrdersPool.sort((a, b) => getOrderCapacity(b.items) - getOrderCapacity(a.items));
-
-            vehicleOrdersPool.forEach(order => {
-                const orderCapacity = getOrderCapacity(order.items);
-                if (tripLoad + orderCapacity <= vehicle.capacity) {
-                    tripOrders.push(order);
-                    tripLoad += orderCapacity;
-                } else {
-                    remainingForNextTrip.push(order);
-                }
+        calculatedTrips.forEach(tripOrderIds => {
+            const stops: RouteStop[] = tripOrderIds.map(orderId => {
+                const order = ordersToRoute.find(o => o.id === orderId)!;
+                const store = stores.find(s => s.id === order.storeId)!;
+                routedOrderIds.add(orderId);
+                return {
+                    orderId: order.id,
+                    storeId: order.storeId,
+                    storeName: order.storeName,
+                    address: store.address,
+                    status: 'Pending'
+                };
             });
 
-            if (tripOrders.length === 0) {
-                // If the smallest order doesn't fit, it cannot be routed with this vehicle.
-                // This case shouldn't happen if orders are smaller than capacity but is a safeguard.
-                break; 
-            }
-
-            try {
-                const { sequence } = await optimizeAndSequenceRoute(tripOrders, depotLocation);
-                const sequencedStops: RouteStop[] = sequence.map((orderId: string) => {
-                    const order = tripOrders.find(o => o.id === orderId)!;
-                    const store = stores.find(s => s.id === order.storeId)!;
-                    return {
-                        orderId: order.id,
-                        storeId: order.storeId,
-                        storeName: store.name,
-                        address: store.address,
-                        status: 'Pending'
-                    };
-                });
-
-                const newRoutePlan: RoutePlan = {
+            if (stops.length > 0) {
+                 const newRoutePlan: RoutePlan = {
                     id: `r-${Date.now()}-${Math.random().toString(16).slice(2)}`,
                     driverId: driver.id,
                     vehicleId: vehicle.id,
                     date: deliveryDate,
-                    stops: sequencedStops,
+                    stops: stops,
                     region: vehicle.region,
                 };
                 newRoutes.push(newRoutePlan);
-                tripOrders.forEach(o => routedOrderIds.add(o.id));
-
-            } catch (e) {
-                console.error("Gagal mengoptimalkan rute untuk satu trip:", e);
-                return { success: false, message: "Terjadi kesalahan saat optimasi rute oleh AI." };
             }
-
-            vehicleOrdersPool = remainingForNextTrip; 
-        }
+        });
 
         // 5. Final state updates
         if (newRoutes.length > 0) {
@@ -514,10 +495,13 @@ export const AppProvider: React.FC<{children: ReactNode}> = ({ children }) => {
             setRoutes(currentRoutes => [...currentRoutes, ...newRoutes]);
         }
         
-        const unroutedCount = ordersToRoute.length - routedOrderIds.size;
-        let message = `Berhasil membuat ${newRoutes.length} perjalanan baru untuk ${driver.name} dengan ${vehicle.plateNumber}, menjadwalkan ${routedOrderIds.size} pesanan.`;
+        let message = `Berhasil membuat ${newRoutes.length} perjalanan baru untuk ${driver.name}, menjadwalkan ${routedOrderIds.size} pesanan.`;
+        if (unroutableLargeOrders > 0) {
+             message += ` ${unroutableLargeOrders} pesanan diabaikan karena melebihi kapasitas armada.`;
+        }
+        const unroutedCount = nodes.length - routedOrderIds.size;
         if (unroutedCount > 0) {
-            message += ` ${unroutedCount} pesanan tidak dapat dirutekan karena kapasitas tidak mencukupi.`;
+            message += ` ${unroutedCount} pesanan tidak dapat dirutekan.`;
         }
 
         return { success: true, message };
@@ -530,36 +514,47 @@ export const AppProvider: React.FC<{children: ReactNode}> = ({ children }) => {
             alert("Tidak ada kunjungan yang dijadwalkan untuk sales ini pada tanggal tersebut.");
             return;
         }
+        
+        const nodes: RouteNode[] = visitsForDay.map(visit => {
+            const store = stores.find(s => s.id === visit.storeId);
+            return {
+                id: visit.id,
+                location: store!.location,
+                demand: 0,
+            }
+        });
 
-        try {
-            const { sequence } = await optimizeSalesVisitRoute(visitsForDay, stores);
+        const depotLocation = { lat: -7.8664161, lng: 110.1486773 };
+        const calculatedTrips = calculateSavingsMatrixRoutes(nodes, depotLocation, Infinity);
 
-            const sequencedStops: SalesVisitStop[] = sequence.map((id: string) => {
-                const visit = visitsForDay.find(v => v.id === id)!;
-                const store = stores.find(s => s.id === visit.storeId)!;
-                return {
-                    visitId: visit.id,
-                    storeId: visit.storeId,
-                    storeName: store.name,
-                    address: store.address,
-                    purpose: visit.purpose,
-                };
-            });
-
-            const newRoutePlan: SalesVisitRoutePlan = {
-                id: `svr-${Date.now()}`,
-                salesPersonId,
-                date: visitDate,
-                stops: sequencedStops
-            };
-
-            setSalesVisitRoutes(prev => [...prev, newRoutePlan]);
-
-        } catch (error) {
-            console.error("Failed to create sales visit route plan:", error);
+        if (calculatedTrips.length === 0 || calculatedTrips[0].length === 0) {
             alert("Gagal membuat rencana rute kunjungan. Silakan coba lagi.");
-            throw error;
+            return;
         }
+
+        const sequence = calculatedTrips[0];
+
+        const sequencedStops: SalesVisitStop[] = sequence.map((id: string) => {
+            const visit = visitsForDay.find(v => v.id === id)!;
+            const store = stores.find(s => s.id === visit.storeId)!;
+            return {
+                visitId: visit.id,
+                storeId: visit.storeId,
+                storeName: store.name,
+                address: store.address,
+                purpose: visit.purpose,
+            };
+        });
+
+        const newRoutePlan: SalesVisitRoutePlan = {
+            id: `svr-${Date.now()}`,
+            salesPersonId,
+            date: visitDate,
+            stops: sequencedStops
+        };
+
+        setSalesVisitRoutes(prev => [...prev, newRoutePlan]);
+        
     }, [visits, stores]);
 
     const dispatchVehicle = useCallback((vehicleId: string) => {
