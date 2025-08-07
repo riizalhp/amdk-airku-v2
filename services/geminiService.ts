@@ -1,44 +1,38 @@
-import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
 import { Order, Coordinate, Store, Visit } from "../types";
 
-if (!process.env.API_KEY) {
-  throw new Error("API_KEY environment variable not set");
+const OPENROUTER_API_KEY = import.meta.env.VITE_OPENROUTER_API_KEY;
+const YOUR_SITE_URL = "http://localhost:5173"; // Ganti dengan URL situs Anda yang sebenarnya
+const YOUR_SITE_NAME = "AMDK Airku"; // Ganti dengan nama situs Anda yang sebenarnya
+
+if (!OPENROUTER_API_KEY) {
+  throw new Error("VITE_OPENROUTER_API_KEY environment variable not set");
 }
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
-export async function clusterOrders(orders: Order[], numClusters: number): Promise<any> {
-  const prompt = `
-    Given the following list of pending orders with their store locations (latitude, longitude), 
-    group them into ${numClusters} geographical clusters using a clustering algorithm like K-Means.
-    
-    Orders:
-    ${JSON.stringify(orders.map(o => ({ id: o.id, location: o.location })), null, 2)}
-    
-    Return a JSON object where each key is a cluster ID (e.g., "cluster_1", "cluster_2") and the value is an array of order IDs belonging to that cluster.
-  `;
-
-  const clusterProperties: { [key: string]: object } = {};
-  for (let i = 1; i <= numClusters; i++) {
-    clusterProperties[`cluster_${i}`] = { type: Type.ARRAY, items: { type: Type.STRING } };
-  }
-
+async function callOpenRouterApi(model: string, messages: { role: string; content: string }[]): Promise<any> {
   try {
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: clusterProperties,
-        },
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+        "HTTP-Referer": YOUR_SITE_URL,
+        "X-Title": YOUR_SITE_NAME,
+        "Content-Type": "application/json"
       },
+      body: JSON.stringify({
+        model: model,
+        messages: messages,
+        temperature: 0.6, // Dapat disesuaikan
+      })
     });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(`OpenRouter API error: ${response.status} - ${errorData.message || JSON.stringify(errorData)}`);
+    }
     
-    return JSON.parse(response.text);
+    return response.json();
   } catch (error) {
-    console.error("Error clustering orders:", error);
+    console.error("Error calling OpenRouter API:", error);
     throw error;
   }
 }
@@ -46,124 +40,73 @@ export async function clusterOrders(orders: Order[], numClusters: number): Promi
 export async function optimizeAndSequenceRoute(
   orders: Order[],
   depotLocation: Coordinate
-): Promise<any> {
+): Promise<{ sequence: string[] }> {
+  const orderDetails = orders.map(o => ({ id: o.id, name: o.storeName, location: o.location }));
+
   const prompt = `
     You are a logistics optimization expert for a water delivery service. Your task is to solve a Vehicle Routing Problem (VRP) with a Time Window aspect, specifically using the Nearest Neighbour heuristic.
 
     Depot Location: ${JSON.stringify(depotLocation)}
     
     List of deliveries (orders):
-    ${JSON.stringify(orders.map(o => ({ id: o.id, name: o.storeName, location: o.location })), null, 2)}
+    ${JSON.stringify(orderDetails, null, 2)}
     
     Starting from the depot, determine the most efficient sequence of deliveries.
     
     Return a JSON object containing a single key "sequence" with a value that is an array of order IDs in the optimal delivery order.
+    Only return the JSON object, nothing else.
   `;
 
   try {
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            sequence: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-            },
-          },
-        },
-      },
-    });
-    return JSON.parse(response.text);
+    const response = await callOpenRouterApi("z-ai/glm-4.5-air:free", [{ role: "user", content: prompt }]);
+    const content = response.choices[0].message.content;
+    const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/);
+    if (jsonMatch && jsonMatch[1]) {
+      return JSON.parse(jsonMatch[1]);
+    } else {
+      // Fallback if no markdown block is found, try to parse directly
+      return JSON.parse(content);
+    }
   } catch (error) {
-    console.error("Error optimizing and sequencing route:", error);
-    throw error;
-  }
-}
-
-export async function classifyStoreRegion(storeLocation: Coordinate, allStores: Store[]): Promise<{ region: 'Utara' | 'Tengah' | 'Selatan' }> {
-  const prompt = `
-    You are a geographical data analyst for KU AIRKU in Gunung Kidul.
-    Your task is to classify a new store into one of our three sales territories: 'Utara', 'Tengah', or 'Selatan' using the K-Means Clustering methodology.
-
-    Here are the existing stores, which form our current clusters:
-    ${JSON.stringify(allStores.map(s => ({ name: s.name, location: s.location, region: s.region })), null, 2)}
-
-    A new store has been added at this location:
-    ${JSON.stringify(storeLocation)}
-
-    1.  For each territory ('Utara', 'Tengah', 'Selatan'), calculate its geographical center (centroid) based on the locations of the existing stores in that territory.
-    2.  Calculate the distance from the new store's location to each of the three territory centroids.
-    3.  Assign the new store to the territory with the nearest centroid.
-
-    Return a JSON object with a single key "region" and the classified territory name as its value (either 'Utara', 'Tengah', or 'Selatan').
-  `;
-
-  try {
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            region: { type: Type.STRING },
-          },
-        },
-      },
-    });
-    return JSON.parse(response.text);
-  } catch (error) {
-    console.error("Error classifying store region:", error);
+    console.error("Error optimizing and sequencing route with OpenRouter:", error);
     throw error;
   }
 }
 
 export async function optimizeSalesVisitRoute(visits: Visit[], stores: Store[]): Promise<{ sequence: string[] }> {
-    const visitLocations = visits.map(v => {
-        const store = stores.find(s => s.id === v.storeId);
-        return {
-            id: v.id,
-            location: store?.location,
-            storeName: store?.name,
-        }
-    }).filter(v => v.location);
+  const visitLocations = visits.map(v => {
+    const store = stores.find(s => s.id === v.storeId);
+    return {
+      id: v.id,
+      location: store?.location,
+      storeName: store?.name,
+    };
+  }).filter(v => v.location);
 
-    const prompt = `
-        You are a logistics optimization expert for a sales team. Your task is to solve a Traveling Salesperson Problem (TSP) for a list of store visits using the Nearest Neighbour heuristic.
+  const prompt = `
+    You are a logistics optimization expert for a sales team. Your task is to solve a Traveling Salesperson Problem (TSP) for a list of store visits using the Nearest Neighbour heuristic.
 
-        List of store visits for the day:
-        ${JSON.stringify(visitLocations, null, 2)}
-        
-        Determine the most efficient sequence of visits. There is no fixed starting or ending point, just find the best path that covers all locations.
-        
-        Return a JSON object containing a single key "sequence" with a value that is an array of visit IDs in the optimal visit order.
-    `;
+    List of store visits for the day:
+    ${JSON.stringify(visitLocations, null, 2)}
+    
+    Determine the most efficient sequence of visits. There is no fixed starting or ending point, just find the best path that covers all locations.
+    
+    Return a JSON object containing a single key "sequence" with a value that is an array of visit IDs in the optimal visit order.
+    Only return the JSON object, nothing else.
+  `;
 
-    try {
-        const response: GenerateContentResponse = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                        sequence: {
-                            type: Type.ARRAY,
-                            items: { type: Type.STRING },
-                        },
-                    },
-                },
-            },
-        });
-        return JSON.parse(response.text);
-    } catch (error) {
-        console.error("Error optimizing sales visit route:", error);
-        throw error;
+  try {
+    const response = await callOpenRouterApi("z-ai/glm-4.5-air:free", [{ role: "user", content: prompt }]);
+    const content = response.choices[0].message.content;
+    const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/);
+    if (jsonMatch && jsonMatch[1]) {
+      return JSON.parse(jsonMatch[1]);
+    } else {
+      // Fallback if no markdown block is found, try to parse directly
+      return JSON.parse(content);
     }
+  } catch (error) {
+    console.error("Error optimizing sales visit route with OpenRouter:", error);
+    throw error;
+  }
 }

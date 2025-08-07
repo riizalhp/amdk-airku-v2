@@ -5,7 +5,7 @@ import { Card } from '../ui/Card';
 import { ICONS } from '../../constants';
 import { Store, Coordinate } from '../../types';
 import { Modal } from '../ui/Modal';
-import { classifyStoreRegion } from '../../services/geminiService';
+
 
 const parseCoordinatesFromURL = (url: string): Coordinate | null => {
     const match = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
@@ -16,7 +16,7 @@ const parseCoordinatesFromURL = (url: string): Coordinate | null => {
 };
 
 export const StoreManagement: React.FC = () => {
-    const { stores, addStore, updateStore, deleteStore } = useAppContext();
+    const { stores, addStore, updateStore, deleteStore, orders, visits } = useAppContext();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const initialFormState: Omit<Store, 'id'> = {
         name: '',
@@ -27,6 +27,8 @@ export const StoreManagement: React.FC = () => {
         phone: '',
         subscribedSince: new Date().toISOString().split('T')[0],
         lastOrder: 'N/A',
+        isPartner: false,
+        partnerCode: '',
     };
     const [currentStore, setCurrentStore] = useState<Omit<Store, 'id'> | Store>(initialFormState);
     const [googleMapsLink, setGoogleMapsLink] = useState('');
@@ -60,6 +62,18 @@ export const StoreManagement: React.FC = () => {
         const { name, value } = e.target;
         setCurrentStore(prev => ({ ...prev, [name]: value }));
     };
+    
+    const handleCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const { name, checked } = e.target;
+        setCurrentStore(prev => {
+            const newStore = { ...prev, [name]: checked };
+            if (!checked) {
+                // Clear partner code if unchecked
+                (newStore as Partial<Store>).partnerCode = '';
+            }
+            return newStore;
+        });
+    };
 
     const handleDetectRegion = async () => {
         setFormError('');
@@ -72,15 +86,31 @@ export const StoreManagement: React.FC = () => {
 
         setIsClassifying(true);
         try {
-            const result = await classifyStoreRegion(coords, stores);
-            if (result.region) {
-                setDetectedRegion(result.region);
-            } else {
-                setFormError('Gagal mendeteksi wilayah. Coba lagi.');
+            const { lat, lng } = coords;
+            let region: 'Timur' | 'Barat' | 'Bukan di Kulon Progo' = 'Bukan di Kulon Progo';
+
+            // Bounding box for Kulon Progo
+            const minLat = -8.00;
+            const maxLat = -7.67;
+            const minLng = 110.00;
+            const maxLng = 110.30;
+            const pdamKulonProgoLongitude = 110.1486773;
+
+            if (lat >= minLat && lat <= maxLat && lng >= minLng && lng <= maxLng) {
+                if (lng > pdamKulonProgoLongitude) {
+                    region = 'Timur';
+                } else {
+                    region = 'Barat';
+                }
+            }
+
+            setDetectedRegion(region);
+            if (region === 'Bukan di Kulon Progo') {
+                setFormError('Lokasi toko berada di luar wilayah layanan Kulon Progo.');
             }
         } catch (error) {
             console.error(error);
-            setFormError('Terjadi kesalahan saat menghubungi layanan AI.');
+            setFormError('Terjadi kesalahan saat mendeteksi wilayah.');
         } finally {
             setIsClassifying(false);
         }
@@ -90,8 +120,18 @@ export const StoreManagement: React.FC = () => {
         e.preventDefault();
         setFormError('');
 
+        if (currentStore.isPartner && !currentStore.partnerCode) {
+            setFormError('Kode Mitra wajib diisi jika toko adalah mitra.');
+            return;
+        }
+
         if (!detectedRegion) {
             setFormError('Harap deteksi wilayah terlebih dahulu.');
+            return;
+        }
+
+        if (detectedRegion === 'Bukan di Kulon Progo') {
+            setFormError('Lokasi toko berada di luar wilayah layanan Kulon Progo dan tidak dapat ditambahkan.');
             return;
         }
 
@@ -115,7 +155,11 @@ export const StoreManagement: React.FC = () => {
             return;
         }
 
-        const storeData = { ...currentStore, location: coordinates, region: detectedRegion };
+        let storeData = { ...currentStore, location: coordinates, region: detectedRegion };
+
+        if (!storeData.isPartner) {
+            storeData.partnerCode = '';
+        }
 
         if(currentStore.name && currentStore.owner && currentStore.phone) {
             if(isEditing) {
@@ -133,7 +177,7 @@ export const StoreManagement: React.FC = () => {
         }
     };
     
-    const canSubmit = currentStore.name && currentStore.owner && currentStore.phone && detectedRegion && !isClassifying;
+    const canSubmit = currentStore.name && currentStore.owner && currentStore.phone && detectedRegion && detectedRegion !== 'Bukan di Kulon Progo' && !isClassifying;
 
     return (
         <div className="p-8 space-y-6">
@@ -156,25 +200,50 @@ export const StoreManagement: React.FC = () => {
                                 <th scope="col" className="px-6 py-3">Nama Toko</th>
                                 <th scope="col" className="px-6 py-3">Pemilik</th>
                                 <th scope="col" className="px-6 py-3">Wilayah</th>
+                                <th scope="col" className="px-6 py-3">Status Mitra</th>
                                 <th scope="col" className="px-6 py-3">Telepon</th>
                                 <th scope="col" className="px-6 py-3">Tanggal Bergabung</th>
                                 <th scope="col" className="px-6 py-3">Aksi</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {stores.map((store: Store) => (
+                            {stores.map((store: Store) => {
+                                const hasDependencies = orders.some(o => o.storeId === store.id) || visits.some(v => v.storeId === store.id);
+                                return (
                                 <tr key={store.id} className="bg-white border-b hover:bg-gray-50">
                                     <td className="px-6 py-4 font-medium text-gray-900">{store.name}</td>
                                     <td className="px-6 py-4">{store.owner}</td>
                                     <td className="px-6 py-4">{store.region}</td>
+                                    <td className="px-6 py-4">
+                                        {store.isPartner ? (
+                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-800 font-mono">
+                                                {store.partnerCode}
+                                            </span>
+                                        ) : (
+                                            <span className="text-gray-400">-</span>
+                                        )}
+                                    </td>
                                     <td className="px-6 py-4">{store.phone}</td>
                                     <td className="px-6 py-4">{store.subscribedSince}</td>
                                     <td className="px-6 py-4 flex space-x-2">
-                                        <button onClick={() => openModalForEdit(store)} className="text-blue-600 hover:text-blue-800">{React.cloneElement(ICONS.edit, {width: 20, height: 20})}</button>
-                                        <button onClick={() => handleDelete(store.id)} className="text-red-600 hover:text-red-800">{React.cloneElement(ICONS.trash, {width: 20, height: 20})}</button>
+                                        <button onClick={() => openModalForEdit(store)} className="text-blue-600 hover:text-blue-800 p-1">{React.cloneElement(ICONS.edit, {width: 20, height: 20})}</button>
+                                        <div className="relative group">
+                                            <button
+                                                onClick={() => handleDelete(store.id)}
+                                                disabled={hasDependencies}
+                                                className="text-red-600 hover:text-red-800 p-1 disabled:text-gray-400 disabled:cursor-not-allowed"
+                                            >
+                                                {React.cloneElement(ICONS.trash, { width: 20, height: 20 })}
+                                            </button>
+                                            {hasDependencies && (
+                                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-gray-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                                                    Tidak dapat dihapus karena memiliki pesanan/kunjungan terkait.
+                                                </div>
+                                            )}
+                                        </div>
                                     </td>
                                 </tr>
-                            ))}
+                            )})}
                         </tbody>
                     </table>
                 </div>
@@ -204,8 +273,40 @@ export const StoreManagement: React.FC = () => {
                              <button type="button" onClick={handleDetectRegion} disabled={isClassifying || !googleMapsLink} className="flex-shrink-0 bg-brand-secondary text-white font-semibold py-2 px-4 rounded-lg disabled:bg-gray-400">
                                 {isClassifying ? 'Mendeteksi...' : 'Deteksi Wilayah'}
                             </button>
-                             {detectedRegion && <p className="font-bold text-brand-dark">Wilayah Terdeteksi: <span className="text-lg">{detectedRegion}</span></p>}
+                             {detectedRegion && (
+                                <p className={`font-bold ${detectedRegion === 'Bukan di Kulon Progo' ? 'text-red-600' : 'text-brand-dark'}`}>
+                                    Wilayah Terdeteksi: <span className="text-lg">{detectedRegion}</span>
+                                </p>
+                             )}
                         </div>
+                    </div>
+                    
+                    <div className="pt-4 border-t">
+                        <div className="flex items-center space-x-3">
+                            <input 
+                                type="checkbox" 
+                                id="isPartner" 
+                                name="isPartner"
+                                checked={currentStore.isPartner}
+                                onChange={handleCheckboxChange}
+                                className="h-4 w-4 text-brand-primary border-gray-300 rounded focus:ring-brand-primary"
+                            />
+                            <label htmlFor="isPartner" className="text-sm font-medium text-gray-800">Jadikan sebagai Mitra</label>
+                        </div>
+                        {currentStore.isPartner && (
+                            <div className="mt-4">
+                                <label htmlFor="partnerCode" className="block text-sm font-medium text-gray-700">Kode Mitra</label>
+                                <input 
+                                    type="text" 
+                                    name="partnerCode" 
+                                    id="partnerCode"
+                                    value={currentStore.partnerCode || ''}
+                                    onChange={handleInputChange}
+                                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm"
+                                    required={currentStore.isPartner} 
+                                />
+                            </div>
+                        )}
                     </div>
 
 

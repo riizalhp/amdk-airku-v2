@@ -8,13 +8,13 @@ import { StoreManagement } from './StoreManagement';
 import { ProductManagement } from './ProductManagement';
 import { OrderManagement } from './OrderManagement';
 import { FleetManagement } from './FleetManagement';
-import { PartnerManagement } from './PartnerManagement';
+import { VehicleManagement } from './VehicleManagement';
 import { SurveyReports } from './SurveyReports';
 import { VisitSchedule } from './VisitSchedule';
 import { ReportsView } from './ReportsView';
 import { useAppContext } from '../../hooks/useAppContext';
 
-type AdminPage = 'dashboard' | 'users' | 'partners' | 'stores' | 'products' | 'fleet' | 'orders' | 'routePlanning' | 'schedule' | 'surveys' | 'reports';
+type AdminPage = 'dashboard' | 'users' | 'stores' | 'products' | 'fleet' | 'vehicles' | 'orders' | 'routePlanning' | 'schedule' | 'surveys' | 'reports';
 
 const navItems: { id: AdminPage; label: string; icon: React.ReactNode }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: ICONS.dashboard },
@@ -24,10 +24,10 @@ const navItems: { id: AdminPage; label: string; icon: React.ReactNode }[] = [
     { id: 'schedule', label: 'Jadwal Kunjungan', icon: ICONS.calendar },
     { id: 'surveys', label: 'Laporan Survei', icon: ICONS.survey },
     { id: 'users', label: 'Manajemen Pengguna', icon: ICONS.users },
-    { id: 'partners', label: 'Manajemen Mitra', icon: ICONS.handshake },
     { id: 'stores', label: 'Manajemen Toko', icon: ICONS.store },
     { id: 'products', label: 'Manajemen Produk', icon: ICONS.product },
-    { id: 'fleet', label: 'Manajemen Armada', icon: ICONS.fleet },
+    { id: 'vehicles', label: 'Manajemen Armada', icon: ICONS.fleet },
+    { id: 'fleet', label: 'Manajemen Muatan', icon: ICONS.orders },
 ];
 
 
@@ -45,14 +45,14 @@ export const AdminView: React.FC = () => {
                 return <RoutePlanning />;
             case 'users':
                 return <UserManagement />;
-            case 'partners':
-                return <PartnerManagement />;
             case 'stores':
                  return <StoreManagement />;
             case 'products':
                 return <ProductManagement />;
             case 'orders':
                 return <OrderManagement />;
+            case 'vehicles':
+                return <VehicleManagement />;
             case 'fleet':
                 return <FleetManagement />;
             case 'schedule':

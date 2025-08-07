@@ -4,6 +4,7 @@ import { useAppContext } from '../../hooks/useAppContext';
 import { Card } from '../ui/Card';
 import { Modal } from '../ui/Modal';
 import { SurveyResponse } from '../../types';
+import { ICONS } from '../../constants';
 
 const DetailSection: React.FC<{ title: string, children: React.ReactNode }> = ({ title, children }) => (
     <div>
@@ -16,8 +17,18 @@ const DetailSection: React.FC<{ title: string, children: React.ReactNode }> = ({
 export const SurveyReports: React.FC = () => {
     const { surveyResponses, users } = useAppContext();
     const [selectedSurvey, setSelectedSurvey] = useState<SurveyResponse | null>(null);
+    const [viewingProof, setViewingProof] = useState<string | null>(null);
 
     const getSalesName = (salesId: string) => users.find(u => u.id === salesId)?.name || 'Sales tidak dikenal';
+
+    const openDetailsModal = (survey: SurveyResponse) => {
+        setSelectedSurvey(survey);
+    };
+
+    const closeModal = () => {
+        setSelectedSurvey(null);
+        setViewingProof(null);
+    }
 
     return (
         <div className="p-8 space-y-6">
@@ -42,13 +53,18 @@ export const SurveyReports: React.FC = () => {
                                     <td className="px-6 py-4 font-medium text-gray-900">{survey.surveyDate}</td>
                                     <td className="px-6 py-4">{survey.storeName}</td>
                                     <td className="px-6 py-4">{getSalesName(survey.salesPersonId)}</td>
-                                    <td className="px-6 py-4">
+                                    <td className="px-6 py-4 flex items-center space-x-4">
                                         <button 
-                                            onClick={() => setSelectedSurvey(survey)}
+                                            onClick={() => openDetailsModal(survey)}
                                             className="font-medium text-brand-primary hover:underline"
                                         >
                                             Lihat Detail
                                         </button>
+                                        {survey.proofOfSurveyImage && (
+                                            <button onClick={() => setViewingProof(survey.proofOfSurveyImage!)} className="text-brand-secondary p-1 rounded-full hover:bg-brand-light" title="Lihat Bukti Foto">
+                                                {React.cloneElement(ICONS.camera, {width: 20, height: 20})}
+                                            </button>
+                                        )}
                                     </td>
                                 </tr>
                             ))}
@@ -59,8 +75,8 @@ export const SurveyReports: React.FC = () => {
             </Card>
 
             {selectedSurvey && (
-                 <Modal title={`Detail Survei - ${selectedSurvey.storeName}`} isOpen={!!selectedSurvey} onClose={() => setSelectedSurvey(null)}>
-                    <div className="space-y-6">
+                 <Modal title={`Detail Survei - ${selectedSurvey.storeName}`} isOpen={!!selectedSurvey} onClose={closeModal}>
+                    <div className="space-y-6 max-h-[70vh] overflow-y-auto pr-2">
                          <DetailSection title="Informasi Toko">
                             <p><strong>Alamat:</strong> {selectedSurvey.storeAddress}</p>
                             <p><strong>No. Telp:</strong> {selectedSurvey.storePhone}</p>
@@ -95,11 +111,20 @@ export const SurveyReports: React.FC = () => {
                         </DetailSection>
 
                         <div className="text-right pt-4">
-                            <button onClick={() => setSelectedSurvey(null)} className="bg-brand-primary text-white font-bold py-2 px-4 rounded-lg hover:bg-brand-dark">Tutup</button>
+                            <button onClick={closeModal} className="bg-brand-primary text-white font-bold py-2 px-4 rounded-lg hover:bg-brand-dark">Tutup</button>
                         </div>
                     </div>
                  </Modal>
             )}
+
+            <Modal title="Bukti Foto Survei" isOpen={!!viewingProof} onClose={() => setViewingProof(null)}>
+                <div className="space-y-4">
+                    {viewingProof && <img src={viewingProof} alt="Bukti Survei" className="w-full h-auto rounded-lg" />}
+                    <div className="flex justify-end pt-4">
+                        <button type="button" onClick={() => setViewingProof(null)} className="bg-brand-primary text-white font-bold py-2 px-4 rounded-lg hover:bg-brand-dark">Tutup</button>
+                    </div>
+                </div>
+            </Modal>
         </div>
     );
 };

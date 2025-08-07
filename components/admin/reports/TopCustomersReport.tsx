@@ -11,18 +11,21 @@ export const TopCustomersReport: React.FC = () => {
 
     const customerData = useMemo(() => {
         const deliveredOrders = orders.filter(o => o.status === OrderStatus.DELIVERED);
-        const data: { [storeId: string]: { name: string, orderCount: number, totalSpending: number } } = {};
+        const data: { [storeId: string]: { name: string, orderCount: number, totalSpending: number, ordersWithSpecialPrice: number } } = {};
 
         deliveredOrders.forEach(order => {
             const store = stores.find(s => s.id === order.storeId);
             if (!store) return;
 
             if (!data[order.storeId]) {
-                data[order.storeId] = { name: store.name, orderCount: 0, totalSpending: 0 };
+                data[order.storeId] = { name: store.name, orderCount: 0, totalSpending: 0, ordersWithSpecialPrice: 0 };
             }
 
             data[order.storeId].orderCount += 1;
             data[order.storeId].totalSpending += order.totalAmount;
+            if (order.items.some(item => item.specialPrice != null && item.specialPrice !== item.originalPrice)) {
+                data[order.storeId].ordersWithSpecialPrice += 1;
+            }
         });
 
         return Object.values(data).sort((a, b) => b.totalSpending - a.totalSpending).slice(0, 10);
@@ -42,6 +45,7 @@ export const TopCustomersReport: React.FC = () => {
                         <tr>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nama Toko</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Jumlah Pesanan</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pesanan Hrg. Khusus</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Pembelian</th>
                         </tr>
                     </thead>
@@ -50,6 +54,7 @@ export const TopCustomersReport: React.FC = () => {
                             <tr key={index}>
                                 <td className="px-6 py-4 whitespace-nowrap">{item.name}</td>
                                 <td className="px-6 py-4 whitespace-nowrap">{item.orderCount}</td>
+                                <td className="px-6 py-4 whitespace-nowrap">{item.ordersWithSpecialPrice > 0 ? item.ordersWithSpecialPrice : '-'}</td>
                                 <td className="px-6 py-4 whitespace-nowrap">Rp {item.totalSpending.toLocaleString('id-ID')}</td>
                             </tr>
                         ))}

@@ -7,7 +7,7 @@ import { User, Role } from '../../types';
 import { Modal } from '../ui/Modal';
 
 export const UserManagement: React.FC = () => {
-    const { users, addUser, updateUser, deleteUser } = useAppContext();
+    const { users, addUser, updateUser, deleteUser, currentUser: loggedInUser, routes, visits, surveyResponses, salesVisitRoutes, orders } = useAppContext();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const initialFormState: Omit<User, 'id'> = { name: '', email: '', role: Role.SALES, password: '' };
     const [currentUser, setCurrentUser] = useState<Omit<User, 'id'> | User>(initialFormState);
@@ -73,7 +73,24 @@ export const UserManagement: React.FC = () => {
                             </tr>
                         </thead>
                         <tbody>
-                            {users.map((user: User) => (
+                            {users.map((user: User) => {
+                                const isSelf = loggedInUser?.id === user.id;
+                                const isDriverWithRoute = user.role === Role.DRIVER && routes.some(r => r.driverId === user.id);
+                                const isSalesWithDeps = user.role === Role.SALES && (
+                                    visits.some(v => v.salesPersonId === user.id) ||
+                                    surveyResponses.some(s => s.salesPersonId === user.id) ||
+                                    salesVisitRoutes.some(r => r.salesPersonId === user.id)
+                                );
+                                const hasMadeOrder = orders.some(o => o.orderedBy.id === user.id);
+                                const canDelete = !isSelf && !isDriverWithRoute && !isSalesWithDeps && !hasMadeOrder;
+                                
+                                let tooltipMessage = '';
+                                if (isSelf) tooltipMessage = 'Tidak dapat menghapus akun sendiri.';
+                                else if (isDriverWithRoute) tooltipMessage = 'Driver memiliki rute yang ditugaskan.';
+                                else if (isSalesWithDeps) tooltipMessage = 'Sales memiliki data kunjungan/survei terkait.';
+                                else if (hasMadeOrder) tooltipMessage = 'Pengguna telah membuat pesanan.';
+                                
+                                return (
                                 <tr key={user.id} className="bg-white border-b hover:bg-gray-50">
                                     <td className="px-6 py-4 font-medium text-gray-900">{user.name}</td>
                                     <td className="px-6 py-4">{user.email}</td>
@@ -83,11 +100,24 @@ export const UserManagement: React.FC = () => {
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 flex space-x-2">
-                                        <button onClick={() => openModalForEdit(user)} className="text-blue-600 hover:text-blue-800">{React.cloneElement(ICONS.edit, {width: 20, height: 20})}</button>
-                                        <button onClick={() => handleDelete(user.id)} className="text-red-600 hover:text-red-800">{React.cloneElement(ICONS.trash, {width: 20, height: 20})}</button>
+                                        <button onClick={() => openModalForEdit(user)} className="text-blue-600 hover:text-blue-800 p-1">{React.cloneElement(ICONS.edit, {width: 20, height: 20})}</button>
+                                        <div className="relative group">
+                                            <button
+                                                onClick={() => handleDelete(user.id)}
+                                                disabled={!canDelete}
+                                                className="text-red-600 hover:text-red-800 p-1 disabled:text-gray-400 disabled:cursor-not-allowed"
+                                            >
+                                                {React.cloneElement(ICONS.trash, { width: 20, height: 20 })}
+                                            </button>
+                                            {!canDelete && (
+                                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-gray-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                                                    {tooltipMessage}
+                                                </div>
+                                            )}
+                                        </div>
                                     </td>
                                 </tr>
-                            ))}
+                            )})}
                         </tbody>
                     </table>
                 </div>

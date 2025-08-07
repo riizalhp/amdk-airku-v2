@@ -2,9 +2,10 @@ import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { useAppContext } from '../../hooks/useAppContext';
 import { ICONS } from '../../constants';
 import { Card } from '../ui/Card';
-import { classifyStoreRegion } from '../../services/geminiService';
-import { Store, OrderStatus, Product, SoughtProduct, CompetitorPrice, CompetitorVolume, SurveyResponse, Visit, VisitStatus, Role, Partner, SalesVisitRoutePlan, SalesVisitStop } from '../../types';
+
+import { Store, OrderStatus, Product, SoughtProduct, CompetitorPrice, CompetitorVolume, SurveyResponse, Visit, VisitStatus, Role, SalesVisitRoutePlan, SalesVisitStop } from '../../types';
 import { Modal } from '../ui/Modal';
+import { DataView } from './DataView';
 
 
 const getStatusClass = (status: VisitStatus) => {
@@ -188,7 +189,7 @@ const parseCoordinatesFromURL = (url: string): { lat: number; lng: number } | nu
 };
 
 const AcquireStore: React.FC = () => {
-    const { addStore, stores } = useAppContext();
+    const { addStore } = useAppContext();
     const [storeName, setStoreName] = useState('');
     const [owner, setOwner] = useState('');
     const [phone, setPhone] = useState('');
@@ -209,15 +210,35 @@ const AcquireStore: React.FC = () => {
             return;
         }
         try {
-            const result = await classifyStoreRegion(coords, stores);
-            setClassifiedRegion(result.region);
+            const { lat, lng } = coords;
+            let region: 'Timur' | 'Barat' | 'Bukan di Kulon Progo' = 'Bukan di Kulon Progo';
+
+            // Bounding box for Kulon Progo
+            const minLat = -8.00;
+            const maxLat = -7.67;
+            const minLng = 110.00;
+            const maxLng = 110.30;
+            const pdamKulonProgoLongitude = 110.1486773;
+
+            if (lat >= minLat && lat <= maxLat && lng >= minLng && lng <= maxLng) {
+                if (lng > pdamKulonProgoLongitude) {
+                    region = 'Timur';
+                } else {
+                    region = 'Barat';
+                }
+            }
+
+            setClassifiedRegion(region);
+            if (region === 'Bukan di Kulon Progo') {
+                setError('Lokasi ini berada di luar wilayah layanan Kulon Progo.');
+            }
         } catch (error) {
             console.error("Failed to classify region", error);
             setError('Gagal mengklasifikasikan wilayah.');
         } finally {
             setIsClassifying(false);
         }
-    }, [googleMapsLink, stores]);
+    }, [googleMapsLink]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -232,6 +253,11 @@ const AcquireStore: React.FC = () => {
             setError("Harap klasifikasikan wilayah terlebih dahulu.");
             return;
         }
+        
+        if (classifiedRegion === 'Bukan di Kulon Progo') {
+            setError("Toko di luar wilayah layanan tidak dapat ditambahkan.");
+            return;
+        }
 
         const newStore: Omit<Store, 'id'> = {
             name: storeName,
@@ -242,6 +268,8 @@ const AcquireStore: React.FC = () => {
             address,
             subscribedSince: new Date().toISOString().split('T')[0],
             lastOrder: 'N/A',
+            isPartner: false,
+            partnerCode: '',
         };
         addStore(newStore);
         alert(`Toko "${storeName}" berhasil ditambahkan!`);
@@ -249,7 +277,7 @@ const AcquireStore: React.FC = () => {
         setStoreName(''); setOwner(''); setPhone(''); setClassifiedRegion(''); setGoogleMapsLink(''); setAddress('');
     };
 
-    const canSubmit = storeName && owner && phone && address && classifiedRegion && !isClassifying;
+    const canSubmit = storeName && owner && phone && address && classifiedRegion && classifiedRegion !== 'Bukan di Kulon Progo' && !isClassifying;
 
     return (
         <Card>
@@ -267,7 +295,11 @@ const AcquireStore: React.FC = () => {
                         <button type="button" onClick={handleClassify} disabled={isClassifying || !googleMapsLink} className="flex-shrink-0 bg-brand-secondary text-white font-semibold py-2 px-4 rounded-lg disabled:bg-gray-400">
                             {isClassifying ? 'Menganalisis...' : 'Deteksi Wilayah'}
                         </button>
-                        {classifiedRegion && <p className="font-bold text-brand-dark">Wilayah: <span className="text-lg">{classifiedRegion}</span></p>}
+                        {classifiedRegion && (
+                            <p className={`font-bold ${classifiedRegion === 'Bukan di Kulon Progo' ? 'text-red-600' : 'text-brand-dark'}`}>
+                                Wilayah: <span className="text-lg">{classifiedRegion}</span>
+                            </p>
+                        )}
                     </div>
                 </div>
                  {error && <p className="text-sm text-red-600">{error}</p>}
@@ -286,10 +318,12 @@ type CartItem = {
 };
 
 const RequestOrder: React.FC = () => {
-    const { stores, products, partners, currentUser, addOrder } = useAppContext();
+    const { stores, products, currentUser, addOrder } = useAppContext();
     const [selectedStore, setSelectedStore] = useState<string>('');
     const [cart, setCart] = useState<CartItem[]>([]);
     const [orderedBySource, setOrderedBySource] = useState('self');
+
+    const partnerStores = useMemo(() => stores.filter(s => s.isPartner), [stores]);
     
     const handleAddProduct = (productId: string) => {
         setCart(prevCart => {
@@ -302,8 +336,8 @@ const RequestOrder: React.FC = () => {
     };
 
     const handleUpdateCart = (productId: string, field: 'quantity' | 'specialPrice', value: number) => {
-        let finalValue = value;
         if (field === 'quantity') {
+            let finalValue = value;
             const product = products.find(p => p.id === productId);
             const availableStock = product ? product.stock - product.reservedStock : 0;
 
@@ -316,9 +350,25 @@ const RequestOrder: React.FC = () => {
                 setCart(prevCart => prevCart.filter(item => item.productId !== productId));
                 return;
             }
+            setCart(prevCart => prevCart.map(item => item.productId === productId ? { ...item, quantity: finalValue } : item));
+            return;
         }
         
-        setCart(prevCart => prevCart.map(item => item.productId === productId ? { ...item, [field]: finalValue } : item));
+        if (field === 'specialPrice') {
+            const product = products.find(p => p.id === productId)!;
+            // Unset specialPrice if it's the same as normal price or invalid (<=0)
+            if (value === product.price || value <= 0) {
+                setCart(prevCart => prevCart.map(item => {
+                    if (item.productId === productId) {
+                        const { specialPrice, ...rest } = item;
+                        return rest;
+                    }
+                    return item;
+                }));
+            } else {
+                setCart(prevCart => prevCart.map(item => item.productId === productId ? { ...item, specialPrice: value } : item));
+            }
+        }
     };
     
     const handleSubmit = (e: React.FormEvent) => {
@@ -336,12 +386,12 @@ const RequestOrder: React.FC = () => {
         if (orderedBySource === 'self') {
             orderedByData = { id: currentUser.id, name: currentUser.name, role: currentUser.role };
         } else {
-            const partner = partners.find((p: Partner) => p.id === orderedBySource);
-            if (!partner) {
+            const partnerStore = stores.find((s: Store) => s.id === orderedBySource);
+            if (!partnerStore) {
                 alert("Mitra tidak ditemukan.");
                 return;
             }
-            orderedByData = { id: partner.id, name: partner.name, role: 'Mitra' };
+            orderedByData = { id: partnerStore.id, name: partnerStore.name, role: 'Mitra' };
         }
 
         const result = addOrder({ storeId: selectedStore, items: cart, orderedBy: orderedByData });
@@ -353,11 +403,19 @@ const RequestOrder: React.FC = () => {
         }
     };
     
-    const totalAmount = useMemo(() => cart.reduce((acc, item) => {
-        const product = products.find(p => p.id === item.productId);
-        const price = item.specialPrice && item.specialPrice > 0 ? item.specialPrice : product?.price || 0;
-        return acc + (price * item.quantity);
-    }, 0), [cart, products]);
+    const { totalAmount, totalNormalPrice } = useMemo(() => {
+        let sellingPriceTotal = 0;
+        let normalPriceTotal = 0;
+        for (const item of cart) {
+            const product = products.find(p => p.id === item.productId);
+            if (product) {
+                const price = item.specialPrice ?? product.price;
+                sellingPriceTotal += price * item.quantity;
+                normalPriceTotal += product.price * item.quantity;
+            }
+        }
+        return { totalAmount: sellingPriceTotal, totalNormalPrice: normalPriceTotal };
+    }, [cart, products]);
 
     return (
         <Card>
@@ -367,14 +425,14 @@ const RequestOrder: React.FC = () => {
                     <label className="block text-sm font-medium text-gray-700">Pilih Toko</label>
                     <select value={selectedStore} onChange={e => setSelectedStore(e.target.value)} className="w-full p-2 border rounded mt-1" required>
                         <option value="" disabled>-- Pilih Toko --</option>
-                        {stores.map(store => <option key={store.id} value={store.id}>{store.name}</option>)}
+                        {stores.map(store => <option key={store.id} value={store.id}>{store.name} - {store.owner}</option>)}
                     </select>
                 </div>
                 <div>
                     <label className="block text-sm font-medium text-gray-700">Dipesan Melalui</label>
                     <select value={orderedBySource} onChange={e => setOrderedBySource(e.target.value)} className="w-full p-2 border rounded mt-1 bg-white" required>
                         <option value="self">Diri Sendiri ({currentUser?.name})</option>
-                        {partners.map((partner: Partner) => <option key={partner.id} value={partner.id}>{partner.name} [Mitra]</option>)}
+                        {partnerStores.map((store: Store) => <option key={store.id} value={store.id}>{store.name} [Mitra]</option>)}
                     </select>
                 </div>
                 <div>
@@ -399,28 +457,52 @@ const RequestOrder: React.FC = () => {
                      <div>
                         <label className="block text-sm font-medium text-gray-700">Keranjang</label>
                         <div className="space-y-2 mt-1 border p-2 rounded-lg">
-                             <div className="grid grid-cols-5 gap-2 text-xs font-bold text-gray-600">
+                             <div className="grid grid-cols-5 gap-2 text-xs font-bold text-gray-600 px-1 pb-1 border-b">
                                 <span className="col-span-2">Produk</span>
-                                <span className="text-center">Jml</span>
-                                <span className="col-span-2 text-center">Hrg. Khusus</span>
+                                <span className="text-center">Jumlah</span>
+                                <span className="col-span-2 text-center">Harga Jual (Rp)</span>
                             </div>
                             {cart.map(item => {
                                 const product = products.find(p => p.id === item.productId);
+                                if (!product) return null;
+
+                                const displayPrice = item.specialPrice ?? product.price;
+                                let profitText = null;
+
+                                if (item.specialPrice !== undefined && item.specialPrice !== product.price) {
+                                    const profit = item.specialPrice - product.price;
+                                    const profitClass = profit > 0 ? "text-green-600" : "text-red-600";
+                                    const profitLabel = profit > 0 ? "Untung" : "Rugi";
+                                    profitText = (
+                                        <p className={`text-xs ${profitClass} text-center`}>
+                                            {profitLabel}: Rp {Math.abs(profit).toLocaleString('id-ID')}/item
+                                        </p>
+                                    );
+                                }
+
                                 return (
-                                    <div key={item.productId} className="grid grid-cols-5 gap-2 items-center">
+                                    <div key={item.productId} className="grid grid-cols-5 gap-2 items-center py-2">
                                         <div className="col-span-2">
-                                            <span className="text-sm">{product?.name}</span>
-                                            <p className="text-xs text-gray-400">Rp {product?.price.toLocaleString('id-ID')}</p>
+                                            <span className="text-sm">{product.name}</span>
+                                            <p className="text-xs text-gray-400">Normal: {product.price.toLocaleString('id-ID')}</p>
                                         </div>
-                                        <input type="number" min="0" value={item.quantity} onChange={e => handleUpdateCart(item.productId, 'quantity', parseInt(e.target.value) || 0)} className="w-full p-1 border rounded text-center"/>
+                                        <div className="flex justify-center">
+                                            <input type="number" min="1" value={item.quantity} onChange={e => handleUpdateCart(item.productId, 'quantity', parseInt(e.target.value) || 1)} className="w-full p-1 border rounded text-center"/>
+                                        </div>
                                         <div className="col-span-2">
-                                            <input type="number" min="0" placeholder="Kosongi" value={item.specialPrice || ''} onChange={e => handleUpdateCart(item.productId, 'specialPrice', parseInt(e.target.value) || 0)} className="w-full p-1 border rounded text-center"/>
+                                            <input type="number" min="0" placeholder={product.price.toString()} value={displayPrice} onChange={e => handleUpdateCart(item.productId, 'specialPrice', parseInt(e.target.value) || 0)} className="w-full p-1 border rounded text-center"/>
+                                            {profitText}
                                         </div>
                                     </div>
                                 )
                             })}
                              <div className="text-right font-bold mt-2 pt-2 border-t">
-                                Total: Rp {totalAmount.toLocaleString('id-ID')}
+                                {totalAmount !== totalNormalPrice && (
+                                    <p className="text-sm font-normal text-gray-500 mb-1">
+                                        Total Harga Normal: Rp {totalNormalPrice.toLocaleString('id-ID')}
+                                    </p>
+                                )}
+                                <p className="text-lg">Total Harga Jual: Rp {totalAmount.toLocaleString('id-ID')}</p>
                             </div>
                         </div>
                     </div>
@@ -435,6 +517,7 @@ const RequestOrder: React.FC = () => {
 
 const MarketSurvey: React.FC = () => {
     const { products, currentUser, addSurveyResponse } = useAppContext();
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const initialFormState = {
         storeName: '',
@@ -446,9 +529,11 @@ const MarketSurvey: React.FC = () => {
         competitorPrices: [] as CompetitorPrice[],
         competitorVolumes: [] as CompetitorVolume[],
         feedback: '',
+        proofOfSurveyImage: '',
     };
 
     const [form, setForm] = useState(initialFormState);
+    const [proofImage, setProofImage] = useState<string | null>(null);
     const [newSoughtProduct, setNewSoughtProduct] = useState({ brand: '', variant: '' });
     const [newAirkuVariant, setNewAirkuVariant] = useState('');
 
@@ -460,6 +545,20 @@ const MarketSurvey: React.FC = () => {
             [list[index], list[newIndex]] = [list[newIndex], list[index]]; // Swap
             return { ...prevForm, [listName]: list };
         });
+    };
+
+    const handlePhotoCapture = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                setProofImage(e.target?.result as string);
+            };
+            reader.readAsDataURL(file);
+        }
+        if (event.target) {
+            event.target.value = '';
+        }
     };
     
     const competitors = useMemo(() => {
@@ -489,29 +588,62 @@ const MarketSurvey: React.FC = () => {
             alert("Harap isi nama toko terlebih dahulu.");
             return;
         }
+        if (!proofImage) {
+            alert("Harap ambil foto sebagai bukti survei.");
+            return;
+        }
 
         const surveyData: Omit<SurveyResponse, 'id'> = {
             ...form,
             salesPersonId: currentUser.id,
+            proofOfSurveyImage: proofImage,
         }
         addSurveyResponse(surveyData);
         alert("Laporan survei berhasil dikirim!");
         setForm(initialFormState);
+        setProofImage(null);
     };
     
     const airkuProductNames = products.map(p => p.name);
+    const canSubmit = form.storeName && proofImage;
 
     return (
         <Card>
+            <input type="file" accept="image/*" capture="environment" ref={fileInputRef} className="hidden" onChange={handlePhotoCapture} />
             <h2 className="text-xl font-bold text-brand-dark mb-4">Lakukan Survei Pasar</h2>
             <form onSubmit={handleSubmit} className="space-y-6">
                 {/* Bagian 1: Informasi Dasar */}
                 <fieldset className="space-y-4 p-4 border rounded-lg">
-                    <legend className="px-2 font-semibold text-brand-primary">Informasi Dasar</legend>
+                    <legend className="px-2 font-semibold text-brand-primary">Informasi Dasar & Bukti</legend>
                     <input type="text" placeholder="Nama Toko" value={form.storeName} onChange={e => setForm(f => ({...f, storeName: e.target.value}))} className="w-full p-2 border rounded" required/>
                     <input type="text" placeholder="Alamat Toko" value={form.storeAddress} onChange={e => setForm(f => ({...f, storeAddress: e.target.value}))} className="w-full p-2 border rounded" required/>
                     <input type="tel" placeholder="No. Telepon Toko" value={form.storePhone} onChange={e => setForm(f => ({...f, storePhone: e.target.value}))} className="w-full p-2 border rounded" required/>
                     <input type="date" value={form.surveyDate} onChange={e => setForm(f => ({...f, surveyDate: e.target.value}))} className="w-full p-2 border rounded" required/>
+                    
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Bukti Survei (Wajib)</label>
+                        {proofImage ? (
+                            <div className="relative">
+                                <img src={proofImage} alt="Bukti survei" className="w-full h-auto rounded-lg border" />
+                                <button
+                                    type="button"
+                                    onClick={() => fileInputRef.current?.click()}
+                                    className="absolute top-2 right-2 bg-white/70 text-black p-2 rounded-full"
+                                >
+                                    Ambil Ulang
+                                </button>
+                            </div>
+                        ) : (
+                            <button 
+                                type="button" 
+                                onClick={() => fileInputRef.current?.click()} 
+                                className="w-full flex items-center justify-center gap-2 p-4 border-2 border-dashed rounded-lg text-gray-500 hover:bg-gray-50"
+                            >
+                                {ICONS.camera}
+                                Ambil Foto Bukti Survei
+                            </button>
+                        )}
+                    </div>
                 </fieldset>
 
                 {/* Bagian 2: Pertanyaan Survei */}
@@ -593,7 +725,7 @@ const MarketSurvey: React.FC = () => {
 
                 </fieldset>
 
-                <button type="submit" className="w-full bg-brand-primary text-white font-bold py-3 px-4 rounded-lg">Kirim Laporan Survei</button>
+                <button type="submit" className="w-full bg-brand-primary text-white font-bold py-3 px-4 rounded-lg disabled:bg-gray-400" disabled={!canSubmit}>Kirim Laporan Survei</button>
             </form>
         </Card>
     );
@@ -604,7 +736,7 @@ export const SalesView: React.FC = () => {
     const { logout, currentUser } = useAppContext();
     const [activePage, setActivePage] = useState<SalesPage>('schedule');
     
-    type SalesPage = 'schedule' | 'acquire' | 'order' | 'survey';
+    type SalesPage = 'schedule' | 'acquire' | 'order' | 'survey' | 'database';
     
     const renderContent = () => {
         switch (activePage) {
@@ -612,15 +744,17 @@ export const SalesView: React.FC = () => {
             case 'acquire': return <AcquireStore />;
             case 'order': return <RequestOrder />;
             case 'survey': return <MarketSurvey />;
+            case 'database': return <DataView />;
             default: return <VisitSchedule />;
         }
     };
     
     const navItems = [
         { id: 'schedule', label: 'Kunjungan', icon: ICONS.calendar },
-        { id: 'acquire', label: 'Akuisisi', icon: ICONS.plus },
+        { id: 'database', label: 'Data Toko', icon: ICONS.store },
         { id: 'order', label: 'Pesan', icon: ICONS.orders },
         { id: 'survey', label: 'Survei', icon: ICONS.survey },
+        { id: 'acquire', label: 'Akuisisi', icon: ICONS.plus },
     ];
 
     return (
@@ -637,7 +771,7 @@ export const SalesView: React.FC = () => {
             <main className="flex-1 p-4 overflow-y-auto bg-brand-background">
                 {renderContent()}
             </main>
-            <nav className="grid grid-cols-4 gap-2 p-2 border-t bg-white">
+            <nav className="grid grid-cols-5 gap-2 p-2 border-t bg-white">
                 {navItems.map(item => (
                     <button
                         key={item.id}

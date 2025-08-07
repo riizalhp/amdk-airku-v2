@@ -11,7 +11,7 @@ export const ProductSalesReport: React.FC = () => {
 
     const salesData = useMemo(() => {
         const deliveredOrders = orders.filter(o => o.status === OrderStatus.DELIVERED);
-        const data: { [productId: string]: { name: string, unitsSold: number, totalRevenue: number } } = {};
+        const data: { [productId: string]: { name: string, unitsSold: number, totalRevenue: number, unitsWithSpecialPrice: number } } = {};
 
         deliveredOrders.forEach(order => {
             order.items.forEach(item => {
@@ -19,12 +19,15 @@ export const ProductSalesReport: React.FC = () => {
                 if (!product) return;
 
                 if (!data[item.productId]) {
-                    data[item.productId] = { name: product.name, unitsSold: 0, totalRevenue: 0 };
+                    data[item.productId] = { name: product.name, unitsSold: 0, totalRevenue: 0, unitsWithSpecialPrice: 0 };
                 }
 
-                const price = item.specialPrice ?? product.price;
+                const price = item.specialPrice ?? item.originalPrice;
                 data[item.productId].unitsSold += item.quantity;
                 data[item.productId].totalRevenue += item.quantity * price;
+                if(item.specialPrice != null && item.specialPrice !== item.originalPrice) {
+                    data[item.productId].unitsWithSpecialPrice += item.quantity;
+                }
             });
         });
 
@@ -45,6 +48,7 @@ export const ProductSalesReport: React.FC = () => {
                         <tr>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nama Produk</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Unit Terjual</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Unit Hrg. Khusus</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Pendapatan</th>
                         </tr>
                     </thead>
@@ -52,7 +56,8 @@ export const ProductSalesReport: React.FC = () => {
                         {salesData.map((item, index) => (
                             <tr key={index}>
                                 <td className="px-6 py-4 whitespace-nowrap">{item.name}</td>
-                                <td className="px-6 py-4 whitespace-nowrap">{item.unitsSold}</td>
+                                <td className="px-6 py-4 whitespace-nowrap">{item.unitsSold.toLocaleString('id-ID')}</td>
+                                <td className="px-6 py-4 whitespace-nowrap">{item.unitsWithSpecialPrice > 0 ? item.unitsWithSpecialPrice.toLocaleString('id-ID') : '-'}</td>
                                 <td className="px-6 py-4 whitespace-nowrap">Rp {item.totalRevenue.toLocaleString('id-ID')}</td>
                             </tr>
                         ))}

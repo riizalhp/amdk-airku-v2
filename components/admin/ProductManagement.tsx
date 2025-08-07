@@ -7,7 +7,7 @@ import { Product } from '../../types';
 import { Modal } from '../ui/Modal';
 
 export const ProductManagement: React.FC = () => {
-    const { products, addProduct, updateProduct, deleteProduct } = useAppContext();
+    const { products, addProduct, updateProduct, deleteProduct, orders } = useAppContext();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const initialFormState: Omit<Product, 'id' | 'reservedStock'> = { sku: '', name: '', price: 0, stock: 0, capacityUnit: 1 };
     const [currentProduct, setCurrentProduct] = useState<Omit<Product, 'id' | 'reservedStock'> | Product>(initialFormState);
@@ -27,12 +27,12 @@ export const ProductManagement: React.FC = () => {
     
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const { name, value } = e.target;
-        setCurrentProduct(prev => ({ ...prev, [name]: (name === 'price' || name === 'stock' || name === 'capacityUnit') ? parseFloat(value) || 0 : value }));
+        setCurrentProduct(prev => ({ ...prev, [name]: (name === 'price' || name === 'stock') ? parseFloat(value) || 0 : value }));
     };
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (currentProduct.name && currentProduct.sku && currentProduct.price > 0 && currentProduct.capacityUnit > 0) {
+        if (currentProduct.name && currentProduct.sku && currentProduct.price > 0) {
             if (isEditing) {
                 updateProduct(currentProduct as Product);
             } else {
@@ -74,7 +74,9 @@ export const ProductManagement: React.FC = () => {
                             </tr>
                         </thead>
                         <tbody>
-                            {products.map((product: Product) => (
+                            {products.map((product: Product) => {
+                                const hasDependencies = orders.some(o => o.items.some(i => i.productId === product.id));
+                                return (
                                 <tr key={product.id} className="bg-white border-b hover:bg-gray-50">
                                     <td className="px-6 py-4 font-mono text-gray-500">{product.sku}</td>
                                     <td className="px-6 py-4 font-medium text-gray-900">{product.name}</td>
@@ -86,11 +88,24 @@ export const ProductManagement: React.FC = () => {
                                         </div>
                                     </td>
                                     <td className="px-6 py-4 flex space-x-2">
-                                        <button onClick={() => openModalForEdit(product)} className="text-blue-600 hover:text-blue-800">{React.cloneElement(ICONS.edit, {width: 20, height: 20})}</button>
-                                        <button onClick={() => handleDelete(product.id)} className="text-red-600 hover:text-red-800">{React.cloneElement(ICONS.trash, {width: 20, height: 20})}</button>
+                                        <button onClick={() => openModalForEdit(product)} className="text-blue-600 hover:text-blue-800 p-1">{React.cloneElement(ICONS.edit, {width: 20, height: 20})}</button>
+                                        <div className="relative group">
+                                            <button
+                                                onClick={() => handleDelete(product.id)}
+                                                disabled={hasDependencies}
+                                                className="text-red-600 hover:text-red-800 p-1 disabled:text-gray-400 disabled:cursor-not-allowed"
+                                            >
+                                                {React.cloneElement(ICONS.trash, { width: 20, height: 20 })}
+                                            </button>
+                                            {hasDependencies && (
+                                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-gray-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                                                    Tidak dapat dihapus karena terikat pada pesanan.
+                                                </div>
+                                            )}
+                                        </div>
                                     </td>
                                 </tr>
-                            ))}
+                            )})}
                         </tbody>
                     </table>
                 </div>
@@ -106,7 +121,7 @@ export const ProductManagement: React.FC = () => {
                         <label htmlFor="sku" className="block text-sm font-medium text-gray-700">SKU</label>
                         <input type="text" name="sku" id="sku" value={currentProduct.sku} onChange={handleInputChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-brand-primary focus:border-brand-primary" required />
                     </div>
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-2 gap-4">
                         <div>
                             <label htmlFor="price" className="block text-sm font-medium text-gray-700">Harga (Rp)</label>
                             <input type="number" name="price" id="price" value={currentProduct.price} onChange={handleInputChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-brand-primary focus:border-brand-primary" required />
@@ -114,10 +129,6 @@ export const ProductManagement: React.FC = () => {
                         <div>
                             <label htmlFor="stock" className="block text-sm font-medium text-gray-700">Stok Fisik Total</label>
                             <input type="number" name="stock" id="stock" value={currentProduct.stock} onChange={handleInputChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-brand-primary focus:border-brand-primary" required />
-                        </div>
-                        <div>
-                            <label htmlFor="capacityUnit" className="block text-sm font-medium text-gray-700">Unit Kapasitas</label>
-                            <input type="number" step="0.1" name="capacityUnit" id="capacityUnit" value={currentProduct.capacityUnit} onChange={handleInputChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-brand-primary focus:border-brand-primary" required />
                         </div>
                     </div>
                     {isEditing && 'reservedStock' in currentProduct &&
