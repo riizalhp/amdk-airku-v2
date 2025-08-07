@@ -1,16 +1,50 @@
-
-import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
 import { Order, Coordinate, Store, Visit } from "../types";
 
 if (!process.env.API_KEY) {
   throw new Error("API_KEY environment variable not set");
 }
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const OPENROUTER_API_BASE = "https://openrouter.ai/api/v1/chat/completions";
+const OPENROUTER_MODEL = "z-ai/glm-4.5-air:free";
+const OPENROUTER_SITE_URL = process.env.SITE_URL || "http://localhost:5173";
+const OPENROUTER_SITE_NAME = process.env.SITE_NAME || "KU AIRKU Distribution Management";
+
+async function callOpenRouter(messages: any[]): Promise<string> {
+  const headers: Record<string, string> = {
+    "Authorization": `Bearer ${process.env.API_KEY}`,
+    "Content-Type": "application/json",
+    "HTTP-Referer": OPENROUTER_SITE_URL,
+    "X-Title": OPENROUTER_SITE_NAME,
+  };
+
+  const body: any = {
+    model: OPENROUTER_MODEL,
+    messages: messages,
+  };
+
+  try {
+    const response = await fetch(OPENROUTER_API_BASE, {
+      method: "POST",
+      headers: headers,
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenRouter API error: ${response.status} ${response.statusText} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    return data.choices[0].message.content;
+  } catch (error) {
+    console.error("Error calling OpenRouter API:", error);
+    throw error;
+  }
+}
 
 export async function clusterOrders(orders: Order[], numClusters: number): Promise<any> {
   const prompt = `
-    Given the following list of pending orders with their store locations (latitude, longitude), 
+    Given the following list of pending orders with their store locations (latitude, longitude),
     group them into ${numClusters} geographical clusters using a clustering algorithm like K-Means.
     
     Orders:
@@ -19,31 +53,10 @@ export async function clusterOrders(orders: Order[], numClusters: number): Promi
     Return a JSON object where each key is a cluster ID (e.g., "cluster_1", "cluster_2") and the value is an array of order IDs belonging to that cluster.
   `;
 
-  const clusterProperties: { [key: string]: object } = {};
-  for (let i = 1; i <= numClusters; i++) {
-    clusterProperties[`cluster_${i}`] = { type: Type.ARRAY, items: { type: Type.STRING } };
-  }
-
-  try {
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: clusterProperties,
-        },
-      },
-    });
-    
-    return JSON.parse(response.text);
-  } catch (error) {
-    console.error("Error clustering orders:", error);
-    throw error;
-  }
+  const messages = [{ role: "user", content: prompt }];
+  const rawResponse = await callOpenRouter(messages);
+  return JSON.parse(rawResponse);
 }
-
 
 export async function classifyStoreRegion(storeLocation: Coordinate): Promise<{ region: 'Timur' | 'Barat' | 'Bukan di Kulon Progo' }> {
   const pdamKulonProgoLongitude = 110.1486773;
@@ -72,23 +85,7 @@ export async function classifyStoreRegion(storeLocation: Coordinate): Promise<{ 
     Return a JSON object with a single key "region" and the classified territory name as its value (either 'Timur', 'Barat', or 'Bukan di Kulon Progo').
   `;
 
-  try {
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            region: { type: Type.STRING },
-          },
-        },
-      },
-    });
-    return JSON.parse(response.text);
-  } catch (error) {
-    console.error("Error classifying store region:", error);
-    throw error;
-  }
+  const messages = [{ role: "user", content: prompt }];
+  const rawResponse = await callOpenRouter(messages);
+  return JSON.parse(rawResponse);
 }
